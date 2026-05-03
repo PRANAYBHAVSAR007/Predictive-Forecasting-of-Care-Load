@@ -14,15 +14,16 @@ st.title("📊 Predictive Forecasting of Care Load")
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
 
-    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Fix Date
+    # ✅ FIX DATE PROPERLY
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])   # 🔥 REMOVE NaT VALUES
+
     df = df.sort_values("Date")
     df.set_index("Date", inplace=True)
 
-    # 🔥 FIX MAIN ISSUE (REMOVE COMMAS)
+    # 🔥 FIX NUMBERS WITH COMMAS
     df["Children in HHS Care"] = df["Children in HHS Care"].astype(str).str.replace(",", "")
     df["Children in HHS Care"] = pd.to_numeric(df["Children in HHS Care"], errors="coerce")
 
@@ -31,10 +32,8 @@ def load_data():
         if col != "Children in HHS Care":
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Remove infinite
+    # Clean values
     df = df.replace([np.inf, -np.inf], np.nan)
-
-    # Fill missing
     df = df.ffill().bfill()
 
     return df
@@ -47,11 +46,9 @@ df = load_data()
 target = "Children in HHS Care"
 
 # =========================
-# FEATURE ENGINEERING
+# FEATURE
 # =========================
 df["lag_1"] = df[target].shift(1)
-
-# Fill again after lag
 df = df.ffill().bfill()
 
 # =========================
@@ -88,7 +85,14 @@ st.subheader("📈 Forecast")
 fig, ax = plt.subplots(figsize=(12,5))
 ax.plot(df[target], label="Historical")
 
-future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
+# ✅ SAFE DATE GENERATION
+last_date = df.index[-1]
+
+if pd.isna(last_date):
+    last_date = pd.Timestamp.today()
+
+future_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
+
 ax.plot(future_dates, forecast, color="red", label="Forecast")
 
 ax.legend()
@@ -106,7 +110,7 @@ st.metric("Latest Care Load", int(df[target].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Cleaned dataset by removing comma-formatted numbers  
-- Model predicts based on previous day trend  
-- Stable and reliable short-term forecasting  
+- Cleaned dataset (fixed commas & dates)
+- Model predicts based on recent trend
+- Stable short-term forecasting
 """)
