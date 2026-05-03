@@ -12,9 +12,6 @@ except:
 
 from sklearn.ensemble import RandomForestRegressor
 
-# =========================
-# PAGE CONFIG
-# =========================
 st.set_page_config(layout="wide")
 st.title("📊 Predictive Forecasting of Care Load & Placement Demand")
 
@@ -33,24 +30,23 @@ def load_data():
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert all to numeric
+    # Convert numeric safely
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Keep only numeric columns
     df = df.select_dtypes(include=[np.number])
 
-    # Fill missing
-    df = df.interpolate()
-    df = df.bfill()
-    df = df.ffill()
+    # Fill missing values (IMPORTANT FIX)
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(method='ffill')
+    df = df.fillna(method='bfill')
 
     return df
 
 df = load_data()
 
 # =========================
-# TARGET COLUMN
+# TARGET
 # =========================
 target_cols = [c for c in df.columns if "hhs" in c.lower()]
 
@@ -63,7 +59,7 @@ df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
 # =========================
-# FEATURE ENGINEERING
+# FEATURES
 # =========================
 cols = df.columns.tolist()
 
@@ -80,9 +76,10 @@ for lag in [1, 7, 14]:
 df["rolling_mean_7"] = df[target].rolling(7).mean()
 df["rolling_mean_14"] = df[target].rolling(14).mean()
 
-# 🔥 FINAL CLEAN
+# 🔥 DO NOT DROP DATA — FILL INSTEAD
 df = df.replace([np.inf, -np.inf], np.nan)
-df = df.dropna()
+df = df.fillna(method='ffill')
+df = df.fillna(method='bfill')
 
 # =========================
 # TRAIN SPLIT
@@ -123,26 +120,21 @@ if model_choice == "Random Forest":
     X = train[features]
     y = train[target]
 
-    # 🔥 FINAL CLEAN BEFORE MODEL
+    # 🔥 FINAL CLEAN (NO DROP, ONLY FILL)
     X = X.replace([np.inf, -np.inf], np.nan)
     y = y.replace([np.inf, -np.inf], np.nan)
 
-    data = pd.concat([X, y], axis=1).dropna()
+    X = X.fillna(method='ffill').fillna(method='bfill')
+    y = y.fillna(method='ffill').fillna(method='bfill')
 
-    if data.shape[0] == 0:
-        st.error("❌ Not enough clean data for training")
-        st.stop()
-
-    X = data[features].values
-    y = data[target].values
+    X = X.values
+    y = y.values
 
     model = RandomForestRegressor()
     model.fit(X, y)
 
     current = df.iloc[-1:].copy()
 
-    # Clean prediction input
-    current = current.replace([np.inf, -np.inf], np.nan)
     current = current.fillna(method='ffill').fillna(method='bfill')
 
     for i in range(forecast_days):
@@ -191,5 +183,5 @@ st.subheader("🧠 Insights")
 st.write("""
 - Forecast predicts future care demand  
 - Net pressure indicates system stress  
-- Enables proactive planning  
+- Helps proactive planning  
 """)
