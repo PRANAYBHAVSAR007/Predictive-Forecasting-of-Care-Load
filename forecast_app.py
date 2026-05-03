@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Optional ARIMA
+# Safe ARIMA import
 try:
     from statsmodels.tsa.arima.model import ARIMA
     arima_available = True
@@ -12,11 +12,9 @@ except:
 
 from sklearn.ensemble import RandomForestRegressor
 
-# PAGE CONFIG
 st.set_page_config(layout="wide")
 st.title("📊 Predictive Forecasting of Care Load & Placement Demand")
 
-# LOAD DATA
 @st.cache_data
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
@@ -30,14 +28,14 @@ def load_data():
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert ALL columns safely to numeric
+    # Convert numeric safely
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Keep only numeric columns for modeling
+    # Keep only numeric columns
     df = df.select_dtypes(include=[np.number])
 
-    # Handle missing values
+    # Fill missing
     df = df.interpolate()
     df = df.bfill()
     df = df.ffill()
@@ -46,19 +44,21 @@ def load_data():
 
 df = load_data()
 
-# Detect target column safely
-target = None
-for col in df.columns:
-    if "hhs" in col.lower():
-        target = col
+# ✅ STRICT TARGET SELECTION (ONLY ONE COLUMN)
+target_cols = [col for col in df.columns if "hhs" in col.lower()]
 
-if target is None:
-    st.error("❌ Target column (HHS Care) not found")
+if len(target_cols) == 0:
+    st.error("❌ No HHS Care column found")
     st.stop()
 
-# Rename target cleanly
+target = target_cols[0]  # take ONLY first match
+
+# Rename safely
 df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
+
+# Ensure it's a Series (CRITICAL FIX)
+df[target] = df[target].astype(float)
 
 # Feature Engineering
 if len(df.columns) >= 3:
@@ -67,11 +67,11 @@ if len(df.columns) >= 3:
 else:
     df["Net Pressure"] = 0
 
-# Lag features
+# Lag features (SAFE NOW)
 for lag in [1, 7, 14]:
     df[f"lag_{lag}"] = df[target].shift(lag)
 
-# Rolling features
+# Rolling
 df["rolling_mean_7"] = df[target].rolling(7).mean()
 df["rolling_mean_14"] = df[target].rolling(14).mean()
 
@@ -81,11 +81,11 @@ df = df.dropna()
 train_size = int(len(df) * 0.8)
 train = df[:train_size]
 
-# Sidebar controls
+# Sidebar
 st.sidebar.header("⚙️ Controls")
 
 model_choice = st.sidebar.selectbox(
-    "Select Model",
+    "Model",
     ["Random Forest", "ARIMA"] if arima_available else ["Random Forest"]
 )
 
@@ -100,7 +100,7 @@ if model_choice == "ARIMA" and arima_available:
         model_fit = model.fit()
         forecast = model_fit.forecast(steps=forecast_days)
     except:
-        st.warning("ARIMA failed, switching to Random Forest")
+        st.warning("ARIMA failed → switching to Random Forest")
         model_choice = "Random Forest"
 
 if model_choice == "Random Forest":
@@ -126,7 +126,7 @@ if model_choice == "Random Forest":
 st.subheader("📈 Forecast")
 
 fig, ax = plt.subplots(figsize=(12,5))
-ax.plot(df[target], label="Historical Data")
+ax.plot(df[target], label="Historical")
 
 future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
 ax.plot(future_dates, forecast, color="red", label="Forecast")
@@ -134,13 +134,12 @@ ax.plot(future_dates, forecast, color="red", label="Forecast")
 ax.legend()
 st.pyplot(fig)
 
-# Additional charts
+# Pressure
 st.subheader("⚠️ System Pressure")
 st.line_chart(df["Net Pressure"])
 
 # KPIs
-st.subheader("📌 Key Indicators")
-
+st.subheader("📌 KPIs")
 col1, col2 = st.columns(2)
 
 col1.metric("Latest Care Load", int(df[target].iloc[-1]))
@@ -150,7 +149,7 @@ col2.metric("Net Pressure", int(df["Net Pressure"].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Forecast helps predict future care demand  
+- Forecast helps anticipate demand  
 - Net pressure indicates system stress  
 - Model supports proactive decision-making  
 """)
