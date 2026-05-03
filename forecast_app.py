@@ -22,27 +22,46 @@ st.title("📊 Predictive Forecasting of Care Load & Placement Demand")
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
 
+    # Clean column names
+    df.columns = df.columns.str.strip()
+
+    # Convert Date
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert columns to numeric (CRITICAL FIX)
-    cols_to_convert = [
-        'Children apprehended and placed in CBP custody',
-        'Children in CBP custody',
-        'Children transferred out of CBP custody',
-        'Children in HHS Care',
-        'Children discharged from HHS Care'
-    ]
+    # AUTO DETECT COLUMN NAMES (ROBUST FIX)
+    col_map = {}
 
-    for col in cols_to_convert:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+    for col in df.columns:
+        c = col.lower()
+        if "apprehended" in c:
+            col_map["cbp_intake"] = col
+        elif "cbp custody" in c and "transferred" not in c:
+            col_map["cbp_care"] = col
+        elif "transferred" in c:
+            col_map["transfers"] = col
+        elif "hhs care" in c:
+            col_map["hhs_care"] = col
+        elif "discharged" in c:
+            col_map["discharge"] = col
 
-    # Interpolate only numeric columns
+    # Convert required columns to numeric safely
+    for key in col_map:
+        df[col_map[key]] = pd.to_numeric(df[col_map[key]], errors='coerce')
+
+    # Rename to standard names
+    df.rename(columns={
+        col_map["hhs_care"]: "Children in HHS Care",
+        col_map["transfers"]: "Children transferred out of CBP custody",
+        col_map["discharge"]: "Children discharged from HHS Care"
+    }, inplace=True)
+
+    # Interpolate ONLY numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     df[numeric_cols] = df[numeric_cols].interpolate()
 
-    # Fill remaining missing values
+    # Fill missing safely (new pandas compatible)
     df = df.bfill()
     df = df.ffill()
 
@@ -50,16 +69,17 @@ def load_data():
 
 df = load_data()
 
-target = 'Children in HHS Care'
+# TARGET
+target = "Children in HHS Care"
 
 # FEATURE ENGINEERING
-df['Net Pressure'] = df['Children transferred out of CBP custody'] - df['Children discharged from HHS Care']
+df["Net Pressure"] = df["Children transferred out of CBP custody"] - df["Children discharged from HHS Care"]
 
 for lag in [1, 7, 14]:
-    df[f'lag_{lag}'] = df[target].shift(lag)
+    df[f"lag_{lag}"] = df[target].shift(lag)
 
-df['rolling_mean_7'] = df[target].rolling(7).mean()
-df['rolling_mean_14'] = df[target].rolling(14).mean()
+df["rolling_mean_7"] = df[target].rolling(7).mean()
+df["rolling_mean_14"] = df[target].rolling(14).mean()
 
 df = df.dropna()
 
@@ -68,7 +88,7 @@ train_size = int(len(df) * 0.8)
 train = df[:train_size]
 test = df[train_size:]
 
-# SIDEBAR CONTROLS
+# SIDEBAR
 st.sidebar.header("⚙️ Controls")
 
 model_options = ["Random Forest"]
@@ -87,7 +107,7 @@ if model_choice == "ARIMA" and arima_available:
     forecast = model_fit.forecast(steps=forecast_days)
 
 else:
-    features = ['lag_1','lag_7','lag_14','rolling_mean_7','rolling_mean_14','Net Pressure']
+    features = ["lag_1","lag_7","lag_14","rolling_mean_7","rolling_mean_14","Net Pressure"]
 
     X_train = train[features]
     y_train = train[target]
@@ -101,20 +121,18 @@ else:
         pred = model.predict(current[features])[0]
         forecast.append(pred)
 
-        # update lag features dynamically
-        current['lag_1'] = pred
-        current['lag_7'] = current['lag_1']
-        current['lag_14'] = current['lag_7']
+        # Update lag features dynamically
+        current["lag_1"] = pred
+        current["lag_7"] = current["lag_1"]
+        current["lag_14"] = current["lag_7"]
 
-# PLOT FORECAST
+# 📈 FORECAST PLOT
 st.subheader("📈 Future Care Load Forecast")
 
 fig, ax = plt.subplots(figsize=(12,5))
-
 ax.plot(df[target], label="Historical Data")
 
 future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
-
 ax.plot(future_dates, forecast, label="Forecast", color='red')
 
 ax.legend()
@@ -122,28 +140,27 @@ ax.set_title("Care Load Forecast")
 
 st.pyplot(fig)
 
-# DISCHARGE DEMAND
+# 📉 DISCHARGE TREND
 st.subheader("📉 Discharge Demand Trend")
-st.line_chart(df['Children discharged from HHS Care'])
+st.line_chart(df["Children discharged from HHS Care"])
 
-# SYSTEM PRESSURE
+# ⚠️ SYSTEM PRESSURE
 st.subheader("⚠️ System Pressure Indicator")
-st.line_chart(df['Net Pressure'])
+st.line_chart(df["Net Pressure"])
 
-# KPIs
+# 📊 KPIs
 st.subheader("📌 Key Indicators")
 
 col1, col2 = st.columns(2)
-
 col1.metric("Latest Care Load", int(df[target].iloc[-1]))
-col2.metric("Latest Net Pressure", int(df['Net Pressure'].iloc[-1]))
+col2.metric("Latest Net Pressure", int(df["Net Pressure"].iloc[-1]))
 
-# INSIGHTS
+# 🧠 INSIGHTS
 st.subheader("🧠 Insights")
 
 st.write("""
-- Positive Net Pressure indicates increasing system stress  
-- Forecast helps predict overcrowding risk  
-- Random Forest captures complex relationships  
-- ARIMA captures trend patterns (if enabled)  
+- Positive Net Pressure indicates system stress  
+- Forecast enables early resource planning  
+- Random Forest captures complex patterns  
+- ARIMA captures time-based trends  
 """)
