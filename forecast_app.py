@@ -26,7 +26,19 @@ def load_data():
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # FIX: Interpolate ONLY numeric columns
+    # Convert columns to numeric (CRITICAL FIX)
+    cols_to_convert = [
+        'Children apprehended and placed in CBP custody',
+        'Children in CBP custody',
+        'Children transferred out of CBP custody',
+        'Children in HHS Care',
+        'Children discharged from HHS Care'
+    ]
+
+    for col in cols_to_convert:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Interpolate only numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     df[numeric_cols] = df[numeric_cols].interpolate()
 
