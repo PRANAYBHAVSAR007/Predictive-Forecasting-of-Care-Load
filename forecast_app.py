@@ -16,20 +16,11 @@ def load_data():
 
     df.columns = df.columns.str.strip()
 
-    # Date handling
+    # Date
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date'])
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
-
-    # Convert numeric
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    df = df.select_dtypes(include=[np.number])
-
-    # Clean values
-    df = df.replace([np.inf, -np.inf], np.nan)
 
     return df
 
@@ -48,25 +39,41 @@ target = target_cols[0]
 df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
-# Drop rows where target is missing
+# =========================
+# CLEAN DATA (STRONG CLEAN)
+# =========================
+df[target] = pd.to_numeric(df[target], errors='coerce')
+
+# Drop rows where target is invalid
 df = df.dropna(subset=[target])
 
-# =========================
-# FEATURE ENGINEERING (MINIMAL)
-# =========================
+# Feature: lag_1
 df["lag_1"] = df[target].shift(1)
 
-# Fill missing values instead of dropping
-df = df.ffill().bfill()
+# =========================
+# FINAL CLEAN BEFORE MODEL
+# =========================
+data = df[["lag_1", target]].copy()
+
+# Convert everything properly
+data["lag_1"] = pd.to_numeric(data["lag_1"], errors='coerce')
+data[target] = pd.to_numeric(data[target], errors='coerce')
+
+# Remove ALL bad rows
+data = data.replace([np.inf, -np.inf], np.nan)
+data = data.dropna()
+
+# SAFETY CHECK
+if len(data) < 5:
+    st.error("❌ Dataset is too small or corrupted. Please check your CSV file.")
+    st.stop()
+
+X = data[["lag_1"]].values
+y = data[target].values
 
 # =========================
-# TRAIN
+# MODEL
 # =========================
-features = ["lag_1"]
-
-X = df[features].values
-y = df[target].values
-
 model = RandomForestRegressor()
 model.fit(X, y)
 
@@ -80,10 +87,10 @@ forecast_days = st.sidebar.slider("Forecast Days", 3, 14, 7)
 # FORECAST
 # =========================
 forecast = []
-current = df.iloc[-1:].copy()
+current = data.iloc[-1:].copy()
 
 for i in range(forecast_days):
-    X_pred = current[features].values
+    X_pred = current[["lag_1"]].values
     pred = model.predict(X_pred)[0]
     forecast.append(pred)
 
@@ -95,9 +102,9 @@ for i in range(forecast_days):
 st.subheader("📈 Forecast")
 
 fig, ax = plt.subplots(figsize=(12,5))
-ax.plot(df[target], label="Historical")
+ax.plot(data[target], label="Historical")
 
-future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
+future_dates = pd.date_range(start=pd.Timestamp.now(), periods=forecast_days)
 ax.plot(future_dates, forecast, color="red", label="Forecast")
 
 ax.legend()
@@ -107,8 +114,7 @@ st.pyplot(fig)
 # KPI
 # =========================
 st.subheader("📌 KPI")
-
-st.metric("Latest Care Load", int(df[target].iloc[-1]))
+st.metric("Latest Care Load", int(data[target].iloc[-1]))
 
 # =========================
 # INSIGHTS
@@ -116,7 +122,7 @@ st.metric("Latest Care Load", int(df[target].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Model uses previous day trend to predict next values  
-- Works even with limited data  
-- Provides stable short-term forecasts  
+- Model predicts based on last observed value  
+- Works reliably even with messy data  
+- Ensures stable deployment  
 """)
