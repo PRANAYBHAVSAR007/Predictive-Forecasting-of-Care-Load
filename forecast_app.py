@@ -22,23 +22,19 @@ st.title("📊 Predictive Forecasting of Care Load & Placement Demand")
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
 
-    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Convert Date
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date'])
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert all to numeric safely
+    # Convert all to numeric
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Keep only numeric columns
     df = df.select_dtypes(include=[np.number])
 
-    # Fill missing values
     df = df.interpolate()
     df = df.bfill()
     df = df.ffill()
@@ -48,22 +44,20 @@ def load_data():
 df = load_data()
 
 # =========================
-# TARGET COLUMN
+# TARGET
 # =========================
-target_cols = [col for col in df.columns if "hhs" in col.lower()]
+target_cols = [c for c in df.columns if "hhs" in c.lower()]
 
-if len(target_cols) == 0:
+if not target_cols:
     st.error("❌ HHS Care column not found")
     st.stop()
 
 target = target_cols[0]
-
-# Ensure single column
 df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
 # =========================
-# FEATURE ENGINEERING
+# FEATURES
 # =========================
 cols = df.columns.tolist()
 
@@ -72,20 +66,21 @@ if len(cols) >= 3:
 else:
     df["Net Pressure"] = 0
 
-# Lag features
-for lag in [1, 7, 14]:
+for lag in [1,7,14]:
     df[f"lag_{lag}"] = df[target].shift(lag)
 
-# Rolling features
 df["rolling_mean_7"] = df[target].rolling(7).mean()
 df["rolling_mean_14"] = df[target].rolling(14).mean()
 
+# 🔥 FINAL CLEAN (CRITICAL)
+df = df.replace([np.inf, -np.inf], np.nan)
 df = df.dropna()
+df = df.reset_index()
 
 # =========================
-# TRAIN SPLIT
+# TRAIN
 # =========================
-train_size = int(len(df) * 0.8)
+train_size = int(len(df)*0.8)
 train = df[:train_size]
 
 # =========================
@@ -117,30 +112,19 @@ if model_choice == "ARIMA" and arima_available:
 if model_choice == "Random Forest":
     features = ["lag_1","lag_7","lag_14","rolling_mean_7","rolling_mean_14","Net Pressure"]
 
-    X = train[features]
-    y = train[target]
-
-    # 🔥 FINAL CLEANING (CRITICAL FIX)
-    X = X.replace([np.inf, -np.inf], np.nan)
-    y = y.replace([np.inf, -np.inf], np.nan)
-
-    valid_idx = X.dropna().index
-    X = X.loc[valid_idx]
-    y = y.loc[valid_idx]
+    X = train[features].values
+    y = train[target].values
 
     model = RandomForestRegressor()
     model.fit(X, y)
 
     current = df.iloc[-1:].copy()
 
-    # Fill missing values before prediction
-    current = current.bfill().ffill()
-
     for i in range(forecast_days):
-        pred = model.predict(current[features])[0]
+        X_pred = current[features].values
+        pred = model.predict(X_pred)[0]
         forecast.append(pred)
 
-        # Update lags
         current["lag_1"] = pred
         current["lag_7"] = pred
         current["lag_14"] = pred
@@ -153,14 +137,14 @@ st.subheader("📈 Forecast")
 fig, ax = plt.subplots(figsize=(12,5))
 ax.plot(df[target], label="Historical Data")
 
-future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
+future_dates = pd.date_range(start=pd.Timestamp.now(), periods=forecast_days)
 ax.plot(future_dates, forecast, color="red", label="Forecast")
 
 ax.legend()
 st.pyplot(fig)
 
 # =========================
-# ADDITIONAL VISUALS
+# VISUALS
 # =========================
 st.subheader("⚠️ System Pressure")
 st.line_chart(df["Net Pressure"])
@@ -168,10 +152,9 @@ st.line_chart(df["Net Pressure"])
 # =========================
 # KPIs
 # =========================
-st.subheader("📌 Key Indicators")
+st.subheader("📌 KPIs")
 
 col1, col2 = st.columns(2)
-
 col1.metric("Latest Care Load", int(df[target].iloc[-1]))
 col2.metric("Net Pressure", int(df["Net Pressure"].iloc[-1]))
 
@@ -181,7 +164,7 @@ col2.metric("Net Pressure", int(df["Net Pressure"].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Forecast predicts future care demand  
-- Net pressure indicates system stress  
-- Enables proactive planning  
+- Forecast predicts future demand  
+- Net pressure indicates stress  
+- Helps proactive planning  
 """)
