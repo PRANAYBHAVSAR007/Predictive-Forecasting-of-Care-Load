@@ -14,13 +14,28 @@ st.title("📊 Predictive Forecasting of Care Load")
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
 
+    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Date
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['Date'])
-    df = df.sort_values('Date')
-    df.set_index('Date', inplace=True)
+    # Fix Date
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.sort_values("Date")
+    df.set_index("Date", inplace=True)
+
+    # 🔥 FIX MAIN ISSUE (REMOVE COMMAS)
+    df["Children in HHS Care"] = df["Children in HHS Care"].astype(str).str.replace(",", "")
+    df["Children in HHS Care"] = pd.to_numeric(df["Children in HHS Care"], errors="coerce")
+
+    # Convert other columns
+    for col in df.columns:
+        if col != "Children in HHS Care":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Remove infinite
+    df = df.replace([np.inf, -np.inf], np.nan)
+
+    # Fill missing
+    df = df.ffill().bfill()
 
     return df
 
@@ -29,51 +44,22 @@ df = load_data()
 # =========================
 # TARGET
 # =========================
-target_cols = [c for c in df.columns if "hhs" in c.lower()]
-
-if not target_cols:
-    st.error("❌ Target column not found")
-    st.stop()
-
-target = target_cols[0]
-df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
 # =========================
-# CLEAN DATA (STRONG CLEAN)
+# FEATURE ENGINEERING
 # =========================
-df[target] = pd.to_numeric(df[target], errors='coerce')
-
-# Drop rows where target is invalid
-df = df.dropna(subset=[target])
-
-# Feature: lag_1
 df["lag_1"] = df[target].shift(1)
 
-# =========================
-# FINAL CLEAN BEFORE MODEL
-# =========================
-data = df[["lag_1", target]].copy()
-
-# Convert everything properly
-data["lag_1"] = pd.to_numeric(data["lag_1"], errors='coerce')
-data[target] = pd.to_numeric(data[target], errors='coerce')
-
-# Remove ALL bad rows
-data = data.replace([np.inf, -np.inf], np.nan)
-data = data.dropna()
-
-# SAFETY CHECK
-if len(data) < 5:
-    st.error("❌ Dataset is too small or corrupted. Please check your CSV file.")
-    st.stop()
-
-X = data[["lag_1"]].values
-y = data[target].values
+# Fill again after lag
+df = df.ffill().bfill()
 
 # =========================
-# MODEL
+# TRAIN
 # =========================
+X = df[["lag_1"]].values
+y = df[target].values
+
 model = RandomForestRegressor()
 model.fit(X, y)
 
@@ -87,13 +73,11 @@ forecast_days = st.sidebar.slider("Forecast Days", 3, 14, 7)
 # FORECAST
 # =========================
 forecast = []
-current = data.iloc[-1:].copy()
+current = df.iloc[-1:].copy()
 
 for i in range(forecast_days):
-    X_pred = current[["lag_1"]].values
-    pred = model.predict(X_pred)[0]
+    pred = model.predict(current[["lag_1"]].values)[0]
     forecast.append(pred)
-
     current["lag_1"] = pred
 
 # =========================
@@ -102,9 +86,9 @@ for i in range(forecast_days):
 st.subheader("📈 Forecast")
 
 fig, ax = plt.subplots(figsize=(12,5))
-ax.plot(data[target], label="Historical")
+ax.plot(df[target], label="Historical")
 
-future_dates = pd.date_range(start=pd.Timestamp.now(), periods=forecast_days)
+future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
 ax.plot(future_dates, forecast, color="red", label="Forecast")
 
 ax.legend()
@@ -114,7 +98,7 @@ st.pyplot(fig)
 # KPI
 # =========================
 st.subheader("📌 KPI")
-st.metric("Latest Care Load", int(data[target].iloc[-1]))
+st.metric("Latest Care Load", int(df[target].iloc[-1]))
 
 # =========================
 # INSIGHTS
@@ -122,7 +106,7 @@ st.metric("Latest Care Load", int(data[target].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Model predicts based on last observed value  
-- Works reliably even with messy data  
-- Ensures stable deployment  
+- Cleaned dataset by removing comma-formatted numbers  
+- Model predicts based on previous day trend  
+- Stable and reliable short-term forecasting  
 """)
