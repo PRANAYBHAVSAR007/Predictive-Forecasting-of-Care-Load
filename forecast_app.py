@@ -22,60 +22,48 @@ def load_data():
     # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Date setup
+    # Convert Date
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Detect columns safely
-    col_map = {}
-
+    # FORCE ALL NUMERIC COLUMNS TO FLOAT (CRITICAL FIX)
     for col in df.columns:
-        c = col.lower()
-        if "hhs care" in c:
-            col_map["hhs"] = col
-        elif "transferred" in c:
-            col_map["transfer"] = col
-        elif "discharged" in c:
-            col_map["discharge"] = col
+        df[col] = pd.to_numeric(df[col], errors='ignore')
 
-    # Convert numeric safely
-    for key in col_map:
-        df[col_map[key]] = pd.to_numeric(df[col_map[key]], errors='coerce')
+    # Convert only numeric-looking columns properly
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    df[numeric_cols] = df[numeric_cols].astype(float)
 
-    # Rename ONLY if present
-    if "hhs" in col_map:
-        df.rename(columns={col_map["hhs"]: "Children in HHS Care"}, inplace=True)
-
-    if "transfer" in col_map:
-        df.rename(columns={col_map["transfer"]: "Children transferred"}, inplace=True)
-
-    if "discharge" in col_map:
-        df.rename(columns={col_map["discharge"]: "Children discharged"}, inplace=True)
-
-    # Fill missing numeric data
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    # NOW interpolation will work
     df[numeric_cols] = df[numeric_cols].interpolate()
 
+    # Fill missing safely
     df = df.bfill().ffill()
 
     return df
 
 df = load_data()
 
-# TARGET
-target = "Children in HHS Care"
+# TARGET COLUMN DETECTION (SAFE)
+target = None
+for col in df.columns:
+    if "hhs care" in col.lower():
+        target = col
 
-# SAFE CHECK
-if target not in df.columns:
-    st.error("❌ 'Children in HHS Care' column not found in dataset")
+if target is None:
+    st.error("❌ Could not find 'Children in HHS Care' column")
     st.stop()
 
+# CREATE STANDARD NAME
+df.rename(columns={target: "Children in HHS Care"}, inplace=True)
+target = "Children in HHS Care"
+
 # FEATURE ENGINEERING
-if "Children transferred" in df.columns and "Children discharged" in df.columns:
-    df["Net Pressure"] = df["Children transferred"] - df["Children discharged"]
+if "Children transferred out of CBP custody" in df.columns and "Children discharged from HHS Care" in df.columns:
+    df["Net Pressure"] = df["Children transferred out of CBP custody"] - df["Children discharged from HHS Care"]
 else:
-    df["Net Pressure"] = 0  # fallback
+    df["Net Pressure"] = 0
 
 # Lag features
 for lag in [1,7,14]:
@@ -86,14 +74,18 @@ df["rolling_mean_14"] = df[target].rolling(14).mean()
 
 df = df.dropna()
 
-# Train-test split
+# TRAIN SPLIT
 train_size = int(len(df)*0.8)
 train = df[:train_size]
 
-# Sidebar
+# SIDEBAR
 st.sidebar.header("⚙️ Controls")
 
-model_choice = st.sidebar.selectbox("Model", ["Random Forest","ARIMA"] if arima_available else ["Random Forest"])
+model_choice = st.sidebar.selectbox(
+    "Model",
+    ["Random Forest","ARIMA"] if arima_available else ["Random Forest"]
+)
+
 forecast_days = st.sidebar.slider("Forecast Days", 3, 14, 7)
 
 forecast = []
@@ -135,10 +127,10 @@ ax.plot(future_dates, forecast, color="red", label="Forecast")
 ax.legend()
 st.pyplot(fig)
 
-# Charts
-if "Children discharged" in df.columns:
+# OPTIONAL CHARTS
+if "Children discharged from HHS Care" in df.columns:
     st.subheader("📉 Discharge Trend")
-    st.line_chart(df["Children discharged"])
+    st.line_chart(df["Children discharged from HHS Care"])
 
 st.subheader("⚠️ System Pressure")
 st.line_chart(df["Net Pressure"])
@@ -152,9 +144,8 @@ col2.metric("Net Pressure", int(df["Net Pressure"].iloc[-1]))
 
 # Insights
 st.subheader("🧠 Insights")
-
 st.write("""
 - Forecast enables proactive planning  
-- Net pressure indicates system stress  
-- Model predicts short-term care load demand  
+- Net pressure shows system stress  
+- Model predicts short-term demand  
 """)
