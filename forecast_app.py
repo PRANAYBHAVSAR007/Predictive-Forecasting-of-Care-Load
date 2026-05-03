@@ -31,8 +31,8 @@ def load_data():
     df[numeric_cols] = df[numeric_cols].interpolate()
 
     # Fill remaining missing values
-    df = df.fillna(method='bfill')
-    df = df.fillna(method='ffill')
+    df = df.bfill()
+    df = df.ffill()
 
     return df
 
