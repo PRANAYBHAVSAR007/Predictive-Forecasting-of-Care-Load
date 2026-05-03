@@ -22,13 +22,13 @@ def load_data():
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert numeric safely
+    # Convert numeric
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
     df = df.select_dtypes(include=[np.number])
 
-    # Remove infinite values
+    # Clean values
     df = df.replace([np.inf, -np.inf], np.nan)
 
     return df
@@ -48,40 +48,25 @@ target = target_cols[0]
 df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
-# Drop rows where target is NaN
+# Drop rows where target is missing
 df = df.dropna(subset=[target])
 
 # =========================
-# FEATURE ENGINEERING
+# FEATURE ENGINEERING (MINIMAL)
 # =========================
-df["Net Pressure"] = df.iloc[:,1] - df.iloc[:,2] if len(df.columns) >= 3 else 0
-
 df["lag_1"] = df[target].shift(1)
-df["lag_7"] = df[target].shift(7)
-df["rolling_mean_7"] = df[target].rolling(7).mean()
+
+# Fill missing values instead of dropping
+df = df.ffill().bfill()
 
 # =========================
-# FINAL CLEAN (MOST IMPORTANT)
+# TRAIN
 # =========================
-features = ["lag_1", "lag_7", "rolling_mean_7", "Net Pressure"]
+features = ["lag_1"]
 
-data = df[features + [target]].copy()
+X = df[features].values
+y = df[target].values
 
-# Remove all invalid values in ONE step
-data = data.replace([np.inf, -np.inf], np.nan)
-data = data.dropna()
-
-# Safety check
-if len(data) < 20:
-    st.error("❌ Dataset too small after cleaning. Please check your CSV.")
-    st.stop()
-
-X = data[features].values
-y = data[target].values
-
-# =========================
-# MODEL
-# =========================
 model = RandomForestRegressor()
 model.fit(X, y)
 
@@ -95,7 +80,7 @@ forecast_days = st.sidebar.slider("Forecast Days", 3, 14, 7)
 # FORECAST
 # =========================
 forecast = []
-current = data.iloc[-1:].copy()
+current = df.iloc[-1:].copy()
 
 for i in range(forecast_days):
     X_pred = current[features].values
@@ -103,7 +88,6 @@ for i in range(forecast_days):
     forecast.append(pred)
 
     current["lag_1"] = pred
-    current["lag_7"] = pred
 
 # =========================
 # PLOT
@@ -111,28 +95,20 @@ for i in range(forecast_days):
 st.subheader("📈 Forecast")
 
 fig, ax = plt.subplots(figsize=(12,5))
-ax.plot(data[target], label="Historical")
+ax.plot(df[target], label="Historical")
 
-future_dates = pd.date_range(start=data.index[-1], periods=forecast_days+1)[1:]
+future_dates = pd.date_range(start=df.index[-1], periods=forecast_days+1)[1:]
 ax.plot(future_dates, forecast, color="red", label="Forecast")
 
 ax.legend()
 st.pyplot(fig)
 
 # =========================
-# VISUALS
+# KPI
 # =========================
-st.subheader("⚠️ System Pressure")
-st.line_chart(data["Net Pressure"])
+st.subheader("📌 KPI")
 
-# =========================
-# KPIs
-# =========================
-st.subheader("📌 KPIs")
-
-col1, col2 = st.columns(2)
-col1.metric("Latest Care Load", int(data[target].iloc[-1]))
-col2.metric("Net Pressure", int(data["Net Pressure"].iloc[-1]))
+st.metric("Latest Care Load", int(df[target].iloc[-1]))
 
 # =========================
 # INSIGHTS
@@ -140,7 +116,7 @@ col2.metric("Net Pressure", int(data["Net Pressure"].iloc[-1]))
 st.subheader("🧠 Insights")
 
 st.write("""
-- Forecast predicts short-term care demand  
-- Net pressure indicates system stress  
-- Supports proactive planning  
+- Model uses previous day trend to predict next values  
+- Works even with limited data  
+- Provides stable short-term forecasts  
 """)
