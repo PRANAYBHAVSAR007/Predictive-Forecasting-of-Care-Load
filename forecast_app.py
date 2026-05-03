@@ -14,23 +14,21 @@ st.title("📊 Predictive Forecasting of Care Load")
 def load_data():
     df = pd.read_csv("HHS_Unaccompanied_Alien_Children_Program.csv")
 
-    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Convert Date
+    # Date handling
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date'])
     df = df.sort_values('Date')
     df.set_index('Date', inplace=True)
 
-    # Convert all columns to numeric
+    # Convert to numeric
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Keep only numeric columns
     df = df.select_dtypes(include=[np.number])
 
-    # Replace infinite and fill missing
+    # Fill missing safely
     df = df.replace([np.inf, -np.inf], np.nan)
     df = df.ffill().bfill()
 
@@ -39,7 +37,7 @@ def load_data():
 df = load_data()
 
 # =========================
-# TARGET COLUMN
+# TARGET
 # =========================
 target_cols = [c for c in df.columns if "hhs" in c.lower()]
 
@@ -52,7 +50,7 @@ df.rename(columns={target: "Children in HHS Care"}, inplace=True)
 target = "Children in HHS Care"
 
 # =========================
-# FEATURE ENGINEERING
+# FEATURES
 # =========================
 cols = df.columns.tolist()
 
@@ -61,22 +59,35 @@ if len(cols) >= 3:
 else:
     df["Net Pressure"] = 0
 
-# Lag features
-for lag in [1, 7, 14]:
-    df[f"lag_{lag}"] = df[target].shift(lag)
+# Use fewer lags (LESS DATA LOSS)
+df["lag_1"] = df[target].shift(1)
+df["lag_7"] = df[target].shift(7)
 
-# Rolling feature
+# Rolling
 df["rolling_mean_7"] = df[target].rolling(7).mean()
 
-# Fill after feature creation
+# Fill missing instead of dropping
 df = df.replace([np.inf, -np.inf], np.nan)
 df = df.ffill().bfill()
 
 # =========================
-# TRAIN SPLIT
+# TRAIN
 # =========================
-train_size = int(len(df) * 0.8)
-train = df[:train_size]
+features = ["lag_1", "lag_7", "rolling_mean_7", "Net Pressure"]
+
+X = df[features]
+y = df[target]
+
+# FINAL CLEAN (no drop)
+X = X.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+y = y.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+
+X = X.values
+y = y.values
+
+# Train model
+model = RandomForestRegressor()
+model.fit(X, y)
 
 # =========================
 # SIDEBAR
@@ -85,33 +96,11 @@ st.sidebar.header("⚙️ Controls")
 forecast_days = st.sidebar.slider("Forecast Days", 3, 14, 7)
 
 # =========================
-# MODEL
-# =========================
-features = ["lag_1", "lag_7", "lag_14", "rolling_mean_7", "Net Pressure"]
-
-# 🔥 FINAL CLEAN (MOST IMPORTANT STEP)
-data = train[features + [target]].copy()
-
-data = data.replace([np.inf, -np.inf], np.nan)
-data = data.dropna()
-
-if len(data) < 10:
-    st.error("❌ Not enough clean data. Please check dataset.")
-    st.stop()
-
-X = data[features].values
-y = data[target].values
-
-model = RandomForestRegressor()
-model.fit(X, y)
-
-# =========================
 # FORECAST
 # =========================
 forecast = []
 current = df.iloc[-1:].copy()
 
-current = current.replace([np.inf, -np.inf], np.nan)
 current = current.ffill().bfill()
 
 for i in range(forecast_days):
@@ -121,7 +110,6 @@ for i in range(forecast_days):
 
     current["lag_1"] = pred
     current["lag_7"] = pred
-    current["lag_14"] = pred
 
 # =========================
 # PLOT
